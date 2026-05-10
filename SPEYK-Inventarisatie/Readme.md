@@ -85,18 +85,6 @@ Typ het volgende commando en vervang `jouwschool.nl` door het e-maildomein van j
 .\New-SPEYKInventarisatieAccount.ps1 -TenantDomein "jouwschool.nl"
 ```
 
-**Voorbeelden:**
-```powershell
-# Geert Groote College Amsterdam
-.\New-SPEYKInventarisatieAccount.ps1 -TenantDomein "ggca.nl"
-
-# Rudolf Steiner College
-.\New-SPEYKInventarisatieAccount.ps1 -TenantDomein "rscollege.nl"
-
-# Adriaan Roland Holstschool
-.\New-SPEYKInventarisatieAccount.ps1 -TenantDomein "arh.nl"
-```
-
 ---
 
 ### Stap 5 – Inloggen bij Microsoft

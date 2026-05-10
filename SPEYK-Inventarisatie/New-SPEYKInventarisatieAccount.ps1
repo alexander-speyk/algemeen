@@ -30,7 +30,7 @@
 
 [CmdletBinding(SupportsShouldProcess)]
 param (
-    # Het UPN-domein van de tenant, bijv. "ggca.nl" of "rscollege.nl"
+    # Het UPN-domein van de tenant, bijv. "jouwschool.nl" of "voschool.onmicrosoft.com"
     [Parameter(Mandatory)]
     [ValidatePattern('^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')]
     [string]$TenantDomein,
