@@ -11,10 +11,9 @@ Wanneer SPEYK een inventarisatie uitvoert bij jouw school, heeft onze adviseur t
 Het script regelt in één keer:
 
 - ✅ Aanmaken van het account `speyk-inventarisatie@jouwschool.nl`
-- ✅ Toewijzen van de rol **Global Administrator** (nodig voor de inventarisatie)
+- ✅ Toewijzen van de rol **Global Reader** of **Global Administrator** — jij kiest welke tijdens het uitvoeren
 - ✅ Verplichte **MFA** (multi-factor authenticatie) zodat het account beveiligd is
 - ✅ Een **tijdelijk wachtwoord** dat bij de eerste aanmelding meteen gewijzigd moet worden
-- ✅ Een **Temporary Access Pass** (TAP) als jouw licentie dat ondersteunt — dit is een eenmalige inlogcode waarmee de adviseur direct MFA kan instellen
 
 ---
 
@@ -85,6 +84,17 @@ Typ het volgende commando en vervang `jouwschool.nl` door het e-maildomein van j
 .\New-SPEYKInventarisatieAccount.ps1 -TenantDomein "jouwschool.nl"
 ```
 
+**Voorbeelden:**
+```powershell
+# Met een eigen domein
+.\New-SPEYKInventarisatieAccount.ps1 -TenantDomein "jouwschool.nl"
+
+# Met het onmicrosoft.com-domein (altijd beschikbaar, ook als je eigen domein onbekend is)
+.\New-SPEYKInventarisatieAccount.ps1 -TenantDomein "jouwschool.onmicrosoft.com"
+```
+
+> 💡 Weet je jouw domein niet? Kijk in de Entra-portal onder **Instellingen → Domeinnamen**, of vraag het aan jouw SPEYK-contactpersoon.
+
 ---
 
 ### Stap 5 – Inloggen bij Microsoft
@@ -95,7 +105,37 @@ Na het starten opent er automatisch een browservenster. Log in met jouw eigen be
 
 ---
 
-### Stap 6 – Wacht tot het script klaar is
+### Stap 6 – Kies de rol voor het SPEYK-account
+
+Het script vraagt welke rol het account moet krijgen:
+
+```
+► Welke rol moet het SPEYK-account krijgen?
+
+  [1] Global Reader      – alleen-lezen toegang tot alle instellingen.
+                           Voldoende voor een inventarisatie waarbij
+                           SPEYK niets hoeft te wijzigen.
+
+  [2] Global Administrator – volledige beheertoegang.
+                           Kies dit alleen als SPEYK expliciet heeft
+                           aangegeven dat dit nodig is.
+
+  Keuze (1 of 2):
+```
+
+**Wanneer kies je wat?**
+
+| Situatie | Keuze |
+|---|---|
+| SPEYK komt een inventarisatie doen (nulmeting, audit) | **1 – Global Reader** |
+| SPEYK moet ook iets instellen of configureren | **2 – Global Administrator** |
+| Je twijfelt? Vraag het aan jouw SPEYK-contactpersoon. | — |
+
+> ⚠️ Bij keuze 2 vraagt het script nog een extra bevestiging. Typ dan precies `JA` (hoofdletters) om door te gaan.
+
+---
+
+### Stap 7 – Wacht tot het script klaar is
 
 Je ziet in het PowerShell-venster stap voor stap wat er gebeurt:
 
@@ -110,19 +150,19 @@ Je ziet in het PowerShell-venster stap voor stap wat er gebeurt:
 ► Account aanmaken: speyk-inventarisatie@jouwschool.nl
   ✓ Account aangemaakt.
 
-► Global Administrator rol toewijzen...
-  ✓ Global Administrator rol toegewezen.
+► Welke rol moet het SPEYK-account krijgen?
+  [1] Global Reader
+  [2] Global Administrator
+  Keuze (1 of 2): 1
+  ✓ Rol 'Global Reader' toegewezen.
 
 ► MFA configureren...
   ✓ Conditional Access policy aangemaakt.
-
-► Temporary Access Pass aanmaken...
-  ✓ TAP aangemaakt (geldig 8 uur, eenmalig gebruik).
 ```
 
 ---
 
-### Stap 7 – Geef de gegevens door aan SPEYK
+### Stap 8 – Geef de gegevens door aan SPEYK
 
 Aan het einde verschijnt een samenvatting met het wachtwoord of de TAP-code:
 
@@ -133,15 +173,15 @@ Aan het einde verschijnt een samenvatting met het wachtwoord of de TAP-code:
 ══════════════════════════════════════════════════════
 
   UPN            : speyk-inventarisatie@jouwschool.nl
-  Rol            : Global Administrator
+  Rol            : Global Reader
   MFA            : Verplicht (Conditional Access)
 
   ─── Eerste aanmelding ───────────────────────────────
-  Temporary Access Pass : AbCdEf123456
-  (TAP is eenmalig geldig, vervalt na 8 uur)
+  Tijdelijk wachtwoord  : Voorbeeld@Wachtwoord99!
+  (Wachtwoord moet worden gewijzigd bij eerste login)
 
-  Aanmeldportal  : https://portal.microsoft.com
-  MFA registratie: https://aka.ms/mfasetup
+  Na het wijzigen van het wachtwoord MFA registreren via:
+  https://aka.ms/mfasetup
 ══════════════════════════════════════════════════════
 ```
 
@@ -150,6 +190,9 @@ Stuur deze gegevens **veilig** door naar jouw SPEYK-contactpersoon — bij voork
 ---
 
 ## Veelgestelde vragen
+
+### Ik weet niet welke rol ik moet kiezen
+Vraag het aan jouw SPEYK-contactpersoon vóór je het script uitvoert. Als vuistregel: kies **Global Reader** bij een inventarisatie of audit, en **Global Administrator** alleen als SPEYK ook daadwerkelijk iets moet instellen.
 
 ### Het script zegt dat er een module geïnstalleerd wordt — is dat veilig?
 Ja. Het script installeert officiële Microsoft-modules van de PowerShell Gallery. Dit zijn dezelfde modules die IT-professionals wereldwijd gebruiken om Microsoft 365 te beheren.
@@ -161,7 +204,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
 ### Het script vraagt twee keer om in te loggen
-Dat is normaal. De tweede aanmelding is voor een extra beveiligingsmachtiging om de Temporary Access Pass aan te maken.
+Dat is normaal. De tweede aanmelding is voor een extra beveiligingsmachtiging om de Conditional Access policy aan te maken.
 
 ### Ik heb geen Business Premium of E3 licentie (bijv. alleen Office 365 A1)
 Voeg dan `-MaakConditionalAccessPolicy:$false` toe aan het commando:
@@ -180,16 +223,15 @@ Verwijder het account zodra SPEYK aangeeft klaar te zijn. Ga daarvoor naar:
 
 | Functie | Vereiste licentie |
 |---|---|
-| Account aanmaken + Global Admin | Elke Microsoft 365 licentie |
+| Account aanmaken + rol toewijzen | Elke Microsoft 365 licentie |
 | MFA via Conditional Access | Entra ID P1 (inbegrepen bij Business Premium, E3, A3) |
 | MFA via per-user (fallback) | Elke Microsoft 365 licentie |
-| Temporary Access Pass (TAP) | Entra ID P1 (inbegrepen bij Business Premium, E3, A3) |
 
 ---
 
 ## Vragen of problemen?
 
-Neem contact op met jouw SPEYK-contactpersoon, of mail naar [a.zoutenbier@speyk.nl](mailto:a.zoutenbier@speyk.nl).
+Neem contact op met jouw SPEYK-contactpersoon, of mail naar [info@speyk.nl](mailto:info@speyk.nl).
 
 ---
 

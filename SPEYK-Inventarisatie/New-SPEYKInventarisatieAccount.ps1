@@ -1,36 +1,41 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Maakt het SPEYK inventarisatie-account aan in Microsoft 365 met Global Admin en verplichte MFA.
+    Maakt het SPEYK inventarisatie-account aan in Microsoft 365 met verplichte MFA.
 
 .DESCRIPTION
     Dit script:
     - Controleert of PowerShell 7+ wordt gebruikt
     - Controleert en installeert benodigde modules (Microsoft.Graph)
     - Maakt het account speyk-inventarisatie@<domein> aan
-    - Wijst de Global Administrator rol toe
+    - Laat de beheerder kiezen tussen Global Reader of Global Administrator
     - Forceert MFA via een Conditional Access policy (per-user MFA als fallback)
-    - Genereert een tijdelijk wachtwoord en TAP (Temporary Access Pass)
+    - Genereert een tijdelijk wachtwoord (wijzigen verplicht bij eerste login)
 
 .NOTES
     Vereisten:
     - PowerShell 7.0 of hoger
     - Uitvoeren als Global Administrator
-    - Entra ID P1 of hoger voor Conditional Access (aanbevolen)
+    - Entra ID P1 of hoger voor Conditional Access (inbegrepen bij Business Premium / E3 / A3)
 
-    Auteur : SPEYK – Alexander Zoutenbier
-    Versie : 1.1
+    Auteur : SPEYK
+    Versie : 1.4
     Datum  : 2026
 
     Changelog:
     1.1 - Per-user MFA endpoint gecorrigeerd naar beta/users/{id}/authentication/requirements
-        - TAP scope (UserAuthenticationMethod.ReadWrite.All) expliciet geconsent via aparte Graph-call
         - CA policy standaard aan (Business Premium / E3 heeft Entra P1)
+    1.2 - Interactieve rolkeuze toegevoegd: beheerder kiest Global Administrator of Global Reader
+        - Klantspecifieke voorbeelddomeinen vervangen door generieke placeholders
+    1.3 - TAP: pre-check op authenticationMethodsPolicy toegevoegd
+    1.4 - TAP volledig verwijderd: vereist extra admin-consent die in de praktijk steeds faalt
+        - Tijdelijk wachtwoord + MFA-registratie via aka.ms/mfasetup is de standaard flow
+        - Scope UserAuthenticationMethod.ReadWrite.All verwijderd uit connect-aanroep
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
 param (
-    # Het UPN-domein van de tenant, bijv. "jouwschool.nl" of "voschool.onmicrosoft.com"
+    # Het UPN-domein van de tenant, bijv. "jouwschool.nl" of "jouwschool.onmicrosoft.com"
     [Parameter(Mandatory)]
     [ValidatePattern('^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')]
     [string]$TenantDomein,
@@ -139,7 +144,6 @@ $scopes = @(
     'Policy.ReadWrite.ConditionalAccess'
     'Policy.Read.All'
     'Directory.ReadWrite.All'
-    'UserAuthenticationMethod.ReadWrite.All'
 )
 
 try {
@@ -191,35 +195,76 @@ if ($bestaandAccount) {
 
 #endregion
 
-#region ── 4. Global Administrator rol toewijzen ─────────────────────────────
+#region ── 4. Rolkeuze – interactief ─────────────────────────────────────────
 
-Write-Step "Global Administrator rol toewijzen..."
+Write-Step "Welke rol moet het SPEYK-account krijgen?"
+Write-Host ""
+Write-Host "  [1] Global Reader     – alleen-lezen toegang tot alle instellingen." -ForegroundColor White
+Write-Host "                          Voldoende voor een inventarisatie waarbij" -ForegroundColor DarkGray
+Write-Host "                          SPEYK niets hoeft te wijzigen." -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  [2] Global Administrator – volledige beheertoegang." -ForegroundColor White
+Write-Host "                          Kies dit alleen als SPEYK expliciet heeft" -ForegroundColor DarkGray
+Write-Host "                          aangegeven dat dit nodig is (bijv. voor" -ForegroundColor DarkGray
+Write-Host "                          security-scans of configuratiewerk)." -ForegroundColor DarkGray
+Write-Host ""
 
-$globalAdminRolNaam = 'Global Administrator'
-$rol = Get-MgDirectoryRole -Filter "displayName eq '$globalAdminRolNaam'" -ErrorAction SilentlyContinue
+# Herhaal de vraag totdat de beheerder 1 of 2 invoert
+do {
+    $rolKeuze = (Read-Host "  Keuze (1 of 2)").Trim()
+    if ($rolKeuze -notin @('1', '2')) {
+        Write-Waarschuwing "Voer 1 of 2 in."
+    }
+} while ($rolKeuze -notin @('1', '2'))
 
-# Rol activeren als nog niet actief in de tenant
+# Stel rolnaam in op basis van keuze
+$gekozenRolNaam = switch ($rolKeuze) {
+    '1' { 'Global Reader' }
+    '2' { 'Global Administrator' }
+}
+
+# Extra bevestiging bij Global Admin
+if ($rolKeuze -eq '2') {
+    Write-Host ""
+    Write-Host "  ⚠  Je kiest voor Global Administrator." -ForegroundColor Yellow
+    Write-Host "     Dit geeft SPEYK volledige beheertoegang tot jullie Microsoft 365-omgeving." -ForegroundColor Yellow
+    Write-Host "     Verwijder het account zodra de werkzaamheden zijn afgerond." -ForegroundColor Yellow
+    Write-Host ""
+    $bevestig = (Read-Host "  Weet je het zeker? Typ JA om door te gaan").Trim()
+    if ($bevestig -ne 'JA') {
+        Write-Waarschuwing "Actie geannuleerd door beheerder. Script wordt gestopt."
+        Disconnect-MgGraph | Out-Null
+        exit 0
+    }
+}
+
+Write-Step "Rol toewijzen: $gekozenRolNaam..."
+
+$rol = Get-MgDirectoryRole -Filter "displayName eq '$gekozenRolNaam'" -ErrorAction SilentlyContinue
+
+# Rol activeren als nog niet actief in de tenant (komt voor bij zelden gebruikte rollen)
 if (-not $rol) {
-    Write-Waarschuwing "Global Administrator rol nog niet geactiveerd – wordt nu geactiveerd..."
-    $rolTemplate = Get-MgDirectoryRoleTemplate | Where-Object { $_.DisplayName -eq $globalAdminRolNaam }
+    Write-Waarschuwing "'$gekozenRolNaam' nog niet geactiveerd in deze tenant – wordt nu geactiveerd..."
+    $rolTemplate = Get-MgDirectoryRoleTemplate |
+        Where-Object { $_.DisplayName -eq $gekozenRolNaam }
     if (-not $rolTemplate) {
-        Write-Fout "Kon de Global Administrator rolsjabloon niet vinden."
+        Write-Fout "Kon het rolsjabloon voor '$gekozenRolNaam' niet vinden."
         Disconnect-MgGraph | Out-Null
         exit 1
     }
     $rol = New-MgDirectoryRole -RoleTemplateId $rolTemplate.Id -ErrorAction Stop
 }
 
-# Controleer of al lid van de rol
+# Controleer of account al lid is van de gekozen rol
 $bestaandLidmaatschap = Get-MgDirectoryRoleMember -DirectoryRoleId $rol.Id |
     Where-Object { $_.Id -eq $nieuwAccount.Id }
 
 if ($bestaandLidmaatschap) {
-    Write-Waarschuwing "Account is al Global Administrator."
+    Write-Waarschuwing "Account heeft de rol '$gekozenRolNaam' al."
 } else {
     $refBody = @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($nieuwAccount.Id)" }
     New-MgDirectoryRoleMemberByRef -DirectoryRoleId $rol.Id -BodyParameter $refBody -ErrorAction Stop
-    Write-OK "Global Administrator rol toegewezen."
+    Write-OK "Rol '$gekozenRolNaam' toegewezen."
 }
 
 #endregion
@@ -290,46 +335,6 @@ if (-not $MaakConditionalAccessPolicy) {
 
 #endregion
 
-#region ── 6. Temporary Access Pass (TAP) aanmaken ───────────────────────────
-
-Write-Step "Temporary Access Pass aanmaken voor eerste aanmelding..."
-
-# TAP vereist de scope UserAuthenticationMethod.ReadWrite.All.
-# Deze scope kan een aparte admin-consent trigger geven – daarom een tweede
-# Connect-MgGraph met alleen deze scope als die nog niet geconsent is.
-$tapScope = 'UserAuthenticationMethod.ReadWrite.All'
-$huidigScopes = (Get-MgContext).Scopes
-
-if ($tapScope -notin $huidigScopes) {
-    Write-Waarschuwing "Scope $tapScope nog niet geconsent – extra aanmelding vereist..."
-    try {
-        Connect-MgGraph -Scopes $tapScope -NoWelcome -ErrorAction Stop
-        Write-OK "Aanvullende scope geconsent."
-    } catch {
-        Write-Waarschuwing "Kon aanvullende scope niet ophalen: $_"
-    }
-}
-
-$tapUri  = "https://graph.microsoft.com/v1.0/users/$($nieuwAccount.Id)/authentication/temporaryAccessPassMethods"
-$tapBody = @{
-    isUsableOnce      = $true
-    lifetimeInMinutes = 480   # 8 uur geldig
-} | ConvertTo-Json -Compress
-
-try {
-    $tapResponse = Invoke-MgGraphRequest -Method POST -Uri $tapUri `
-        -Body $tapBody -ContentType 'application/json' -ErrorAction Stop
-    $tapCode = $tapResponse.temporaryAccessPass
-    Write-OK "TAP aangemaakt (geldig 8 uur, eenmalig gebruik)."
-} catch {
-    Write-Waarschuwing "TAP aanmaken mislukt: $_"
-    Write-Waarschuwing "Controleer of de TAP authentication method ingeschakeld is in Entra:"
-    Write-Waarschuwing "https://entra.microsoft.com/#view/Microsoft_AAD_IAM/AuthenticationMethodsMenuBlade/~/AdminAuthMethods"
-    $tapCode = $null
-}
-
-#endregion
-
 #region ── 7. Samenvatting ────────────────────────────────────────────────────
 
 Write-Host ""
@@ -340,21 +345,15 @@ Write-Host "══════════════════════�
 Write-Host ""
 Write-Host "  UPN            : $upn"
 Write-Host "  ObjectId       : $($nieuwAccount.Id)"
-Write-Host "  Rol            : Global Administrator"
+Write-Host "  Rol            : $gekozenRolNaam"
 Write-Host "  MFA            : Verplicht ($(if ($MaakConditionalAccessPolicy) {'Conditional Access'} else {'per-user enforced'}))"
 Write-Host ""
 Write-Host "  ─── Eerste aanmelding ───────────────────────────────"
-if ($tapCode) {
-    Write-Host "  Temporary Access Pass : $tapCode" -ForegroundColor Yellow
-    Write-Host "  (TAP is eenmalig geldig, vervalt na 8 uur)"
-    Write-Host "  Gebruik de TAP om MFA-methode te registreren."
-} else {
-    Write-Host "  Tijdelijk wachtwoord  : $wachtwoord" -ForegroundColor Yellow
-    Write-Host "  (Wachtwoord moet worden gewijzigd bij eerste login)"
-}
+Write-Host "  Tijdelijk wachtwoord  : $wachtwoord" -ForegroundColor Yellow
+Write-Host "  (Wachtwoord moet worden gewijzigd bij eerste login)"
 Write-Host ""
-Write-Host "  Aanmeldportal  : https://portal.microsoft.com"
-Write-Host "  MFA registratie: https://aka.ms/mfasetup"
+Write-Host "  Na het wijzigen van het wachtwoord MFA registreren via:"
+Write-Host "  https://aka.ms/mfasetup"
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Magenta
 Write-Host ""
 
